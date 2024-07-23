@@ -6,7 +6,6 @@
 ;; Maintainer:   Luke Lee <luke.yx.lee@gmail.com>
 ;; Keywords:     undo, cursor
 ;; Version:      1.0
-;; Package-Requires: ((cl-lib "0.5"))
 
 ;; GNU Emacs is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -92,17 +91,23 @@
 
 ;;; Code:
 
-;;;###autoload
-(define-minor-mode cursor-undo
-  "Global minor mode for tracking cursor undo."
-  :lighter " cu"
-  :variable cundo-enable-cursor-tracking)
+(defgroup cursor-undo nil
+  "Cursor movement undo support."
+  :prefix "cundo-"
+  :group 'cursor-undo)
 
 ;; Global enabling control flag
 ;;;###autoload
 (defcustom cundo-enable-cursor-tracking  nil
   "Global control flag to enable cursor undo tracking."
+  :require 'cursor-undo
   :type 'boolean)
+
+;;;###autoload
+(define-minor-mode cursor-undo
+  "Global minor mode for tracking cursor undo."
+  :lighter " cu"
+  :variable cundo-enable-cursor-tracking)
 
 ;; Local disable flag, use reverse logic as NIL is still a list and we can
 ;; pop it again and again
@@ -124,6 +129,11 @@
                   (null (caddr buffer-undo-list)))
         ;; (nil (apply cdr nil) nil a b...) -> (nil a b...)
         (setq buffer-undo-list (cddr buffer-undo-list)))))
+
+;; Note that this `prev-screen-start' is NOT a dynamic binding variable.
+;; It's defined here to make byte compiler not to complain about:
+;; "Warning: Unused lexical variable ‘prev-screen-start’".
+(defvar prev-screen-start)
 
 ;;;###autoload
 (defmacro def-cursor-undo (func-sym &optional no-combine screen-pos no-move)
@@ -166,64 +176,63 @@ relative screen position (screen-pos=NIL) nor `point' position (no-move=t)."))
         (error (message
                 (format "Error: Redefining cursor undo advice for `%S'"
                         func-sym))))
-    `(progn
-       (define-advice ,func-sym (:around (orig-func &rest args) ,advice-sym)
-         (let* ((cursor-tracking cundo-enable-cursor-tracking)
-                ;; prevent nested calls for complicated compound commands
-                (cundo-enable-cursor-tracking nil)
-                (prev-point (point))
-                (prev-screen-start))
-           ,@(when screen-pos
-               '((when cursor-tracking
+    `(define-advice ,func-sym (:around (orig-func &rest args) ,advice-sym)
+       (let* ((cursor-tracking cundo-enable-cursor-tracking)
+              ;; prevent nested calls for complicated compound commands
+              (cundo-enable-cursor-tracking nil)
+              (prev-point (point))
+              (prev-screen-start))
+         ,@(when screen-pos
+             '((if cursor-tracking
                    (setq prev-screen-start (window-start)))))
-           (apply orig-func args)
-           ;; This is a helper for commands that might take long. eg. page-up/
-           ;; page-down in big files, or line-up/down in big files when marking.
-           (unless
-               (or (not cursor-tracking)
-                   ;;[2017-11-15 Wed] Still need to test
-                   ;;  `(called-interactively-p 'any)', why?  Maybe it's because
-                   ;;  too many functions are invoked non-interactively and thus
-                   ;;  produce a lot of undo records in the undo
-                   ;;  buffer. Therefore after a search operation there are tons
-                   ;;  and tons of cursor undo information to redo.  Therefore,
-                   ;;  testing `(called-interactively-p 'any)' will be safer.
-                   ;;
-                   ;;[2017-11-13 Mon] We've already prevent reentering so there
-                   ;;  is really no need to test if this call is called
-                   ;;  interactively or not.  When a keyboard command calls
-                   ;;  another keyboard command using normal LISP function calls
-                   ;;  the (called-interactively-p 'any) will return nil unless
-                   ;;  they are called using `call-interactively'.  Now we
-                   ;;  remove it to allow either case.
-                   ;;
-                   ;; A sample function is this:
-                   ;;  (def-cursor-undo line-bookmark-jump-nearest   t  t)
-                   ;;  ;;(def-cursor-undo line-bookmark-nearest-next t  t)
-                   ;;  ;;(def-cursor-undo line-bookmark-nearest-prev t  t)
-                   ;;
-                   ;; `line-bookmark-nearest-next'/`line-bookmark-nearest-prev'
-                   ;; calls `line-bookmark-jump-nearest' (non-interactive call).
-                   ;; By adding cursor-undo to the inner function
-                   ;; `line-bookmark-jump-nearest' we don't need to add to both
-                   ;; `line-bookmark-nearest-next'/`line-bookmark-nearest-prev'.
-                   (not (called-interactively-p 'any))
-                   (car cundo-disable-local-cursor-tracking)
-                   ,@(unless no-combine '((eq last-command this-command)))
-                   ;; if NO-MOVE is specified, check if `point' moved
-                   ,@(unless no-move '((= prev-point (point))))
-                   ;; Sometimes the buffer-undo-list is t
-                   (and (listp buffer-undo-list)
-                        (numberp (cadr buffer-undo-list))
-                        (= prev-point (cadr buffer-undo-list))))
-             ,@(if screen-pos
-                  '((push `(apply cundo-restore-win (,@prev-screen-start))
-                          buffer-undo-list)))
-             ,@(unless no-move
-                '((push prev-point buffer-undo-list)))
-             ;;(abbrevmsg (format "c=%S,%S b=%S" last-command this-command
-             ;;                   buffer-undo-list) 128) ;; DBG
-             (undo-boundary)))))))
+         (apply orig-func args)
+         ;; This is a helper for commands that might take long. eg. page-up/
+         ;; page-down in big files, or line-up/down in big files when marking.
+         (unless
+             (or (not cursor-tracking)
+                 ;;[2017-11-15 Wed] Still need to test
+                 ;;  `(called-interactively-p 'any)', why?  Maybe it's because
+                 ;;  too many functions are invoked non-interactively and thus
+                 ;;  produce a lot of undo records in the undo
+                 ;;  buffer. Therefore after a search operation there are tons
+                 ;;  and tons of cursor undo information to redo.  Therefore,
+                 ;;  testing `(called-interactively-p 'any)' will be safer.
+                 ;;
+                 ;;[2017-11-13 Mon] We've already prevent reentering so there
+                 ;;  is really no need to test if this call is called
+                 ;;  interactively or not.  When a keyboard command calls
+                 ;;  another keyboard command using normal LISP function calls
+                 ;;  the (called-interactively-p 'any) will return nil unless
+                 ;;  they are called using `call-interactively'.  Now we
+                 ;;  remove it to allow either case.
+                 ;;
+                 ;; A sample function is this:
+                 ;;  (def-cursor-undo line-bookmark-jump-nearest   t  t)
+                 ;;  ;;(def-cursor-undo line-bookmark-nearest-next t  t)
+                 ;;  ;;(def-cursor-undo line-bookmark-nearest-prev t  t)
+                 ;;
+                 ;; `line-bookmark-nearest-next'/`line-bookmark-nearest-prev'
+                 ;; calls `line-bookmark-jump-nearest' (non-interactive call).
+                 ;; By adding cursor-undo to the inner function
+                 ;; `line-bookmark-jump-nearest' we don't need to add to both
+                 ;; `line-bookmark-nearest-next'/`line-bookmark-nearest-prev'.
+                 (not (called-interactively-p 'any))
+                 (car cundo-disable-local-cursor-tracking)
+                 ,@(unless no-combine '((eq last-command this-command)))
+                 ;; if NO-MOVE is specified, check if `point' moved
+                 ,@(unless no-move '((= prev-point (point))))
+                 ;; Sometimes the buffer-undo-list is t
+                 (and (listp buffer-undo-list)
+                      (numberp (cadr buffer-undo-list))
+                      (= prev-point (cadr buffer-undo-list))))
+           ,@(if screen-pos
+                 '((push `(apply cundo-restore-win ,prev-screen-start)
+                         buffer-undo-list)))
+           ,@(unless no-move
+               '((push prev-point buffer-undo-list)))
+           ;;(abbrevmsg (format "c=%S,%S b=%S" last-command this-command
+           ;;                   buffer-undo-list) 128) ;; DBG
+           (undo-boundary))))))
 
 ;;
 ;; Disable cursor tracking during miscellaneous operations that could cause
@@ -240,10 +249,9 @@ relative screen position (screen-pos=NIL) nor `point' position (no-move=t)."))
         (error (message (format
 "Error: Redefining cursor tracking disabling advice for `%S'"
                          func-sym))))
-    `(progn
-       (define-advice ,func-sym (:around (orig-func &rest args) ,advice-sym)
-         (let ((cundo-enable-cursor-tracking nil))
-           (apply orig-func args))))))
+    `(define-advice ,func-sym (:around (orig-func &rest args) ,advice-sym)
+       (let ((cundo-enable-cursor-tracking nil))
+         (apply orig-func args)))))
 
 ;;
 ;; Allow cursor undo in a read-only buffer
@@ -401,27 +409,26 @@ relative screen position (screen-pos=NIL) nor `point' position (no-move=t)."))
     (setf this-command lastcmd)))
 
 ;; Bookmark related
-(eval-after-load 'bookmark+-1 ;; emacswiki bookmark extension
-  '(progn
-     (def-cursor-undo bookmark-jump                  t      t) ;; C-x b g
-     (def-cursor-undo bookmark-jump-other-window     t      t) ;; C-x b j
-     (disable-cursor-tracking bookmark-save)))
+;; For feature 'bookmark+-1 (emacswiki bookmark extension)
+(def-cursor-undo bookmark-jump                  t      t) ;; C-x b g
+(def-cursor-undo bookmark-jump-other-window     t      t) ;; C-x b j
+(disable-cursor-tracking bookmark-save)
 
 ;;
 ;; Prevent cursor tracking during semantic parsing
 ;;
-(eval-after-load
+(eval-after-load 'semantic
   '(progn
      (add-hook 'semantic-before-idle-scheduler-reparse-hooks
                #'(lambda ()
                    (push 't cundo-disable-local-cursor-tracking)))
      (add-hook 'semantic-after-idle-scheduler-reparse-hooks
                #'(lambda ()
-                   (pop cundo-disable-local-cursor-tracking)))
-     (disable-cursor-tracking semantic-fetch-tags)
-     (disable-cursor-tracking senator-parse)
-     (disable-cursor-tracking senator-force-refresh)
-     (disable-cursor-tracking semantic-go-to-tag)))
+                   (pop cundo-disable-local-cursor-tracking)))))
+(disable-cursor-tracking semantic-fetch-tags)
+(disable-cursor-tracking senator-parse)
+(disable-cursor-tracking senator-force-refresh)
+(disable-cursor-tracking semantic-go-to-tag)
 
 ;; For feature 'smie
 ;; Need to disable the following, a sample test without disabling this is
@@ -435,21 +442,21 @@ relative screen position (screen-pos=NIL) nor `point' position (no-move=t)."))
 ;;
 ;; Disable cursor tracking during ediff comparing [2013-06-28 15:16:06 +0800]
 ;;
+(defvar undo-cursor-ediff-buffer-list nil)
+(defun undo-cursor-ediff-prepare-buffer-hook ()
+  (push (current-buffer) undo-cursor-ediff-buffer-list)
+  (push 't cundo-disable-local-cursor-tracking)
+  (message "Disable buffer %S cursor tracking" (current-buffer)))
+
+(defun undo-cursor-ediff-cleanup-hook ()
+  (dolist (ediff-buf undo-cursor-ediff-buffer-list)
+    (with-current-buffer ediff-buf
+      (pop cundo-disable-local-cursor-tracking)
+      (message "Enable buffer %S cursor tracking" ediff-buf)))
+  (setf undo-cursor-ediff-buffer-list nil))
+
 (eval-after-load 'ediff
   '(progn
-     (defvar undo-cursor-ediff-buffer-list nil)
-     (defun undo-cursor-ediff-prepare-buffer-hook ()
-       (push (current-buffer) undo-cursor-ediff-buffer-list)
-       (push 't cundo-disable-local-cursor-tracking)
-       (message "Disable buffer %S cursor tracking" (current-buffer)))
-
-     (defun undo-cursor-ediff-cleanup-hook ()
-       (dolist (ediff-buf undo-cursor-ediff-buffer-list)
-         (with-current-buffer ediff-buf
-           (pop cundo-disable-local-cursor-tracking)
-           (message "Enable buffer %S cursor tracking" ediff-buf)))
-       (setf undo-cursor-ediff-buffer-list nil))
-
      (add-hook 'ediff-prepare-buffer-hook
                #'undo-cursor-ediff-prepare-buffer-hook)
      ;; Set-up two cleanup hooks in case of any error
