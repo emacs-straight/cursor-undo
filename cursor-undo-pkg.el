@@ -1,2 +1,2 @@
 ;; Generated package description from cursor-undo.el  -*- no-byte-compile: t -*-
-(define-package "cursor-undo" "1.1.3.0.20240731.135337" "Undo Cursor Movement" 'nil :commit "2264853e77872122a085fb2733b43c80337c44ca" :url "https://elpa.gnu.org/packages/cursor-undo.html" :authors '(("Luke Lee" . "luke.yx.lee@gmail.com")) :maintainer '("Luke Lee" . "luke.yx.lee@gmail.com") :keywords '("undo" "cursor"))
+(define-package "cursor-undo" "1.1.4.0.20240804.55813" "Undo Cursor Movement" 'nil :commit "c544a74e5e4e46bc1211fdad25248200c330ec7b" :url "https://elpa.gnu.org/packages/cursor-undo.html" :authors '(("Luke Lee" . "luke.yx.lee@gmail.com")) :maintainer '("Luke Lee" . "luke.yx.lee@gmail.com") :keywords '("undo" "cursor"))
